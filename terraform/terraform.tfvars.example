@@ -1,0 +1,24 @@
+# Copy this file to terraform.tfvars and fill in your values
+# terraform.tfvars is gitignored for security
+
+aws_region = "us-east-1"
+environment = "dev"
+project_name = "ai-resource-finder"
+
+# S3 Bucket name (must be globally unique)
+s3_cv_bucket_name = "ai-resource-finder-cvs_v1"
+
+# Lambda function name
+lambda_function_name = "cv-ingestion-processor"
+
+# SES Configuration
+ses_from_email = "mg.ganeshguptha@gmail.com"
+ses_admin_email = "mg.ganeshguptha@gmail.com"
+
+# Bedrock Model
+bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+
+# Database URL (PostgreSQL connection string)
+# This should be set as an environment variable or in terraform.tfvars
+# database_url = "postgresql://user:password@host:port/database"
+
