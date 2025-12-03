@@ -6,9 +6,32 @@ import sys
 import os
 
 # Add project root to Python path for imports
-project_root = os.path.dirname(os.path.abspath(__file__))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+# Handle both local and Streamlit Cloud environments
+try:
+    _file_path = os.path.abspath(__file__)
+    project_root = os.path.dirname(_file_path)
+except NameError:
+    # Fallback if __file__ is not available
+    project_root = os.getcwd()
+
+# Add project root to path - verify it has the expected structure
+if project_root and os.path.exists(project_root):
+    has_utils = os.path.exists(os.path.join(project_root, 'utils'))
+    has_services = os.path.exists(os.path.join(project_root, 'services'))
+    has_models = os.path.exists(os.path.join(project_root, 'models'))
+    has_agents = os.path.exists(os.path.join(project_root, 'agents'))
+    
+    # If it has the expected structure, add it
+    if (has_utils or has_services or has_models or has_agents) and project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+# Also add current working directory if different and it has the structure
+cwd = os.getcwd()
+if cwd != project_root and cwd and os.path.exists(cwd):
+    has_utils = os.path.exists(os.path.join(cwd, 'utils'))
+    has_services = os.path.exists(os.path.join(cwd, 'services'))
+    if (has_utils or has_services) and cwd not in sys.path:
+        sys.path.insert(0, cwd)
 
 import streamlit as st
 import json
