@@ -306,11 +306,11 @@ Return ONLY a JSON array, no additional text:"""
         
         # Step 3: Rule-based scoring and final score calculation
         for candidate in candidates:
-            # Get vector similarity score
-            vector_score = candidate.get("similarity", 0.0)
+            # Get vector similarity score - convert to float to handle Decimal types from PostgreSQL
+            vector_score = float(candidate.get("similarity", 0.0))
             
             # Get LLM score
-            llm_score = candidate.get("llm_score", 0.0)
+            llm_score = float(candidate.get("llm_score", 0.0))
             
             # Calculate rule-based score
             rule_score = self.rule_based_scoring(candidate, parsed_requirement)

@@ -70,8 +70,9 @@ class CourseAgent:
             course["rule_score"] = rule_score
             
             # Calculate final course score
-            vector_score = course.get("similarity", 0.0)
-            llm_score = course.get("llm_score", 0.0)
+            # Convert to float to handle Decimal types from PostgreSQL
+            vector_score = float(course.get("similarity", 0.0))
+            llm_score = float(course.get("llm_score", 0.0))
             final_score = (
                 self.config.course_vector_weight * vector_score +
                 self.config.course_llm_weight * llm_score +

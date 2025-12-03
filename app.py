@@ -2,6 +2,14 @@
 AI Resource Finder - Streamlit Application
 """
 
+import sys
+import os
+
+# Add project root to Python path for imports
+project_root = os.path.dirname(os.path.abspath(__file__))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 import streamlit as st
 import json
 from datetime import datetime
