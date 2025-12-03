@@ -47,16 +47,35 @@ class orchestrator:
         parsed_requirement = self.requirement_parser.parse(requirement_text)
         
         # Step 2: Find top candidates using ResourceAgent
+        # Get more candidates initially to see what scores we're getting
         candidates = self.resource_agent.find_candidates(
             requirement_text,
             parsed_requirement,
-            self.config.final_top_candidates
+            top_n=10  # Get more candidates to see scores before filtering
         )
         
         # Step 2.5: Filter candidates by minimum match percentage BEFORE recommending courses
         # This avoids wasting time recommending courses for candidates that won't be displayed
         min_match = self.config.min_match_percentage
-        candidates = [c for c in candidates if c.get("match_percentage", 0) >= min_match]
+        candidates_before_filter = len(candidates)
+        
+        # Debug logging before filtering
+        if candidates_before_filter > 0:
+            match_scores = [c.get("match_percentage", 0) for c in candidates]
+            print(f"ℹ️ Found {candidates_before_filter} candidates with match scores: {match_scores[:5]}")
+        
+        candidates = [c for c in candidates if c.get("match_percentage", 0) > min_match]
+        candidates_after_filter = len(candidates)
+        
+        # Debug logging after filtering
+        if candidates_before_filter > 0 and candidates_after_filter == 0:
+            print(f"⚠️ Warning: {candidates_before_filter} candidates found but all filtered out by min_match_percentage={min_match}%")
+            print(f"   Consider lowering MIN_MATCH_PERCENTAGE or VECTOR_SEARCH_THRESHOLD")
+        elif candidates_after_filter < candidates_before_filter:
+            print(f"ℹ️ Filtered {candidates_before_filter - candidates_after_filter} candidates below {min_match}% threshold")
+        
+        # Limit to final_top_candidates after filtering
+        candidates = candidates[:self.config.final_top_candidates]
         
         # Step 3: Get course recommendations ONLY for candidates that will be displayed
         for candidate in candidates:

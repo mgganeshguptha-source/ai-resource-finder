@@ -56,21 +56,32 @@ class MatchingEngine:
         query_embedding = self.embedder.generate_embedding(requirement_text)
         
         # Query database using cosine similarity
+        # Use configurable threshold from config, default to 0.2 if not set
+        threshold = getattr(self.config, 'vector_search_threshold', 0.2)
         query = """
             SELECT * FROM cosine_similarity_search_candidates(
                 %s::vector,
-                0.3,
+                %s,
                 %s
             )
         """
         
         results = self.db_manager.execute_query(
             query,
-            params=(query_embedding, top_n),
+            params=(query_embedding, threshold, top_n),
             fetch_all=True
         )
         
-        return results or []
+        results_list = results or []
+        
+        # Debug logging
+        if not results_list:
+            print(f"⚠️ Vector search returned 0 candidates with threshold={threshold}")
+        else:
+            similarities = [r.get("similarity", 0) for r in results_list]
+            print(f"ℹ️ Vector search found {len(results_list)} candidates with similarities: {similarities[:5]}")
+        
+        return results_list
     
     def llm_rerank(self, candidates: List[Dict[str, Any]], requirement_text: str, 
                    parsed_requirement: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -110,6 +121,12 @@ class MatchingEngine:
             summary += f"Skills: {', '.join(skills)}\n"
             summary += f"Years of Experience: {candidate.get('years_of_experience', {})}\n"
             summary += f"Domains: {', '.join(candidate.get('domain_tags', [])[:5])}"
+            
+            # Add experience summary if available
+            experience_summary = candidate.get('experience_summary', '')
+            if experience_summary:
+                summary += f"\nExperience Summary: {experience_summary}"
+            
             candidate_summaries.append(summary)
         
         prompt = f"""Evaluate and rank these candidates for the following requirement:
@@ -133,6 +150,12 @@ For each candidate, return a JSON array with:
     "proficiency_insights": "<brief assessment>",
     "evidence_snippets": ["evidence1", "evidence2", ...]
 }}
+
+Important: Pay special attention to the Experience Summary section. Even if a skill is not explicitly listed, 
+the candidate may have relevant experience described in their project descriptions. For example:
+- "database migration" experience might be in project descriptions even if not in the skills list
+- Client names and industries (e.g., "IQVIA" = lifescience) indicate domain experience
+- Project scale and impact (e.g., "migrated 5TB database") demonstrate real-world expertise
 
 Return ONLY a JSON array, no additional text:"""
 
@@ -273,7 +296,10 @@ Return ONLY a JSON array, no additional text:"""
         candidates = self.vector_search(requirement_text, self.config.top_n_candidates)
         
         if not candidates:
+            print("⚠️ No candidates found in vector search - check vector_search_threshold and database embeddings")
             return []
+        
+        print(f"ℹ️ Starting matching pipeline with {len(candidates)} candidates from vector search")
         
         # Step 2: LLM re-ranking
         candidates = self.llm_rerank(candidates, requirement_text, parsed_requirement)

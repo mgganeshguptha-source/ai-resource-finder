@@ -99,6 +99,49 @@ Return the JSON object:"""
                 "domain_tags": []
             }
     
+    def extract_experience_summary(self, cv_text: str) -> str:
+        """
+        Extract a compact experience summary highlighting key projects and relevant experience
+        
+        Args:
+            cv_text: Raw CV text content
+            
+        Returns:
+            Compact summary string (1-3 paragraphs or bullet points)
+        """
+        prompt = f"""Extract a compact, focused experience summary from this CV/resume:
+
+CV Text:
+{cv_text[:8000]}  # Limit to avoid token limits
+
+Create a concise experience summary (1-3 short paragraphs or 3-5 bullet points) that highlights:
+- Key projects and their outcomes
+- Client names and industries (if mentioned)
+- Technical achievements and implementations
+- Domain-specific experience (e.g., lifescience, finance, cloud migration)
+- Scale and impact (e.g., "migrated 5TB database", "served 1M users")
+
+Focus on concrete, specific examples that demonstrate real-world experience.
+Keep it concise but informative - aim for 150-300 words total.
+
+Return ONLY the summary text, no additional formatting or labels:"""
+
+        try:
+            result = self.bedrock_client.invoke_model(prompt, max_tokens=512)
+            # invoke_model returns a string directly
+            summary = result.strip() if result else ""
+            
+            # Clean up the summary - remove any markdown code blocks if present
+            if summary.startswith("```"):
+                # Extract text from code block
+                lines = summary.split("\n")
+                summary = "\n".join([line for line in lines if not line.strip().startswith("```")])
+            
+            return summary
+        except Exception as e:
+            print(f"⚠️ Error extracting experience summary: {str(e)}")
+            return ""
+    
     def process_cv(self, cv_text: str, name: str, email: str, 
                    cv_s3_key: Optional[str] = None, 
                    cv_s3_url: Optional[str] = None) -> CandidateProfile:
@@ -116,6 +159,7 @@ Return the JSON object:"""
             CandidateProfile object
         """
         extracted_info = self.extract_cv_info(cv_text)
+        experience_summary = self.extract_experience_summary(cv_text)
         
         return CandidateProfile(
             name=name,
@@ -124,6 +168,7 @@ Return the JSON object:"""
             extracted_skills=extracted_info["extracted_skills"],
             years_of_experience=extracted_info["years_of_experience"],
             domain_tags=extracted_info["domain_tags"],
+            experience_summary=experience_summary,
             cv_s3_key=cv_s3_key,
             cv_s3_url=cv_s3_url
         )

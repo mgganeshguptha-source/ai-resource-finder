@@ -16,6 +16,7 @@ class CandidateProfile(BaseModel):
     extracted_skills: Dict[str, Any] = Field(default_factory=dict)
     years_of_experience: Dict[str, float] = Field(default_factory=dict)
     domain_tags: List[str] = Field(default_factory=list)
+    experience_summary: Optional[str] = None  # Compact summary of key projects and experience
     embedding: Optional[List[float]] = None
     cv_s3_key: Optional[str] = None
     cv_s3_url: Optional[str] = None

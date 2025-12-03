@@ -66,8 +66,10 @@ class Config:
         # Thresholds
         self.match_threshold_strong = float(self._get_env_var("MATCH_THRESHOLD_STRONG", "0.75"))
         self.match_threshold_moderate = float(self._get_env_var("MATCH_THRESHOLD_MODERATE", "0.50"))
-        # Minimum match percentage to display candidates (0-100)
+        # Minimum match percentage to display candidates (0-100) - only show candidates with >50% match
         self.min_match_percentage = float(self._get_env_var("MIN_MATCH_PERCENTAGE", "50"))
+        # Vector search similarity threshold (0-1) - lower means more candidates
+        self.vector_search_threshold = float(self._get_env_var("VECTOR_SEARCH_THRESHOLD", "0.2"))
         
         # Validate required configuration
         self._validate_config()

@@ -129,8 +129,8 @@ def _store_candidate_profile(db_manager: DatabaseManager, profile) -> None:
     query = """
         INSERT INTO candidate_profiles 
             (name, email, raw_text, extracted_skills, years_of_experience, 
-             domain_tags, embedding, cv_s3_key, cv_s3_url)
-        VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s)
+             domain_tags, experience_summary, embedding, cv_s3_key, cv_s3_url)
+        VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s)
         ON CONFLICT (email) 
         DO UPDATE SET
             name = EXCLUDED.name,
@@ -138,6 +138,7 @@ def _store_candidate_profile(db_manager: DatabaseManager, profile) -> None:
             extracted_skills = EXCLUDED.extracted_skills,
             years_of_experience = EXCLUDED.years_of_experience,
             domain_tags = EXCLUDED.domain_tags,
+            experience_summary = EXCLUDED.experience_summary,
             embedding = EXCLUDED.embedding,
             cv_s3_key = EXCLUDED.cv_s3_key,
             cv_s3_url = EXCLUDED.cv_s3_url,
@@ -151,6 +152,7 @@ def _store_candidate_profile(db_manager: DatabaseManager, profile) -> None:
         json.dumps(profile.extracted_skills),
         json.dumps(profile.years_of_experience),
         profile.domain_tags,
+        profile.experience_summary,
         profile.embedding,
         profile.cv_s3_key,
         profile.cv_s3_url

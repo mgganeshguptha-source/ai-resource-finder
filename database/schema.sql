@@ -21,6 +21,7 @@ CREATE TABLE candidate_profiles (
     extracted_skills JSONB NOT NULL DEFAULT '{}',
     years_of_experience JSONB NOT NULL DEFAULT '{}',
     domain_tags TEXT[],
+    experience_summary TEXT,  -- Compact summary of key projects and experience
     embedding vector(768) NOT NULL,
     cv_s3_key TEXT,
     cv_s3_url TEXT,
@@ -98,6 +99,7 @@ RETURNS TABLE (
     extracted_skills JSONB,
     years_of_experience JSONB,
     domain_tags TEXT[],
+    experience_summary TEXT,
     similarity float
 )
 LANGUAGE plpgsql
@@ -111,6 +113,7 @@ BEGIN
         cp.extracted_skills,
         cp.years_of_experience,
         cp.domain_tags,
+        cp.experience_summary,
         1 - (cp.embedding <=> query_embedding) as similarity
     FROM candidate_profiles cp
     WHERE 1 - (cp.embedding <=> query_embedding) > match_threshold
