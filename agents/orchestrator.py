@@ -69,6 +69,7 @@ class orchestrator:
                             "title": rec.course.title,
                             "description": rec.course.description,
                             "level": rec.course.level,
+                            "url": rec.course.url,
                             "score": rec.score,
                             "rationale": rec.rationale,
                             "gaps_addressed": rec.gaps_addressed

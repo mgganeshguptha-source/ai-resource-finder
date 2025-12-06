@@ -96,9 +96,13 @@ class CourseAgent:
             rule_score = self._rule_based_course_score(course, gaps, candidate_profile)
             course["rule_score"] = rule_score
             
-            # Calculate final course score
-            vector_score = course.get("similarity", 0.0)
-            llm_score = course.get("llm_score", 0.0)
+            # Calculate final course score (convert Decimal to float if needed)
+            similarity_value = course.get("similarity", 0.0)
+            vector_score = float(similarity_value) if similarity_value is not None else 0.0
+            
+            llm_score_value = course.get("llm_score", 0.0)
+            llm_score = float(llm_score_value) if llm_score_value is not None else 0.0
+            
             final_score = (
                 self.config.course_vector_weight * vector_score +
                 self.config.course_llm_weight * llm_score +
@@ -136,6 +140,7 @@ class CourseAgent:
                     description=course.get("description", ""),
                     level=course.get("level"),
                     prerequisites=course.get("prerequisites", []),
+                    url=course.get("url"),
                     metadata=course.get("metadata", {})
                 ),
                 score=course.get("final_score", 0.0),
@@ -184,6 +189,12 @@ class CourseAgent:
             fetch_all=True
         )
         
+        # Convert Decimal similarity values to float to avoid type errors
+        if results:
+            for result in results:
+                if "similarity" in result and result["similarity"] is not None:
+                    result["similarity"] = float(result["similarity"])
+        
         return results or []
     
     def _vector_search_courses_lower_threshold(self, gap_query: str, top_n: int) -> List[Dict[str, Any]]:
@@ -204,6 +215,12 @@ class CourseAgent:
             fetch_all=True
         )
         
+        # Convert Decimal similarity values to float to avoid type errors
+        if results:
+            for result in results:
+                if "similarity" in result and result["similarity"] is not None:
+                    result["similarity"] = float(result["similarity"])
+        
         return results or []
     
     def _get_any_courses_from_db(self, top_n: int) -> List[Dict[str, Any]]:
@@ -216,6 +233,7 @@ class CourseAgent:
                     description,
                     level,
                     prerequisites,
+                    url,
                     0.5 as similarity,
                     metadata
                 FROM training_courses

@@ -14,6 +14,7 @@ class TrainingCourse(BaseModel):
     description: str
     level: Optional[str] = None  # beginner, intermediate, advanced
     prerequisites: List[str] = Field(default_factory=list)
+    url: Optional[str] = None  # Course URL/link
     embedding: Optional[List[float]] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[datetime] = None

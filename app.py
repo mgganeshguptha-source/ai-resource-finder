@@ -72,11 +72,19 @@ st.markdown("""
         margin: 1.5rem 0;
     }
     .course-card {
-        border-left: 3px solid #0066CC;
         padding: 1rem;
-        margin: 0.5rem 0;
+        margin: 0 0 0.5rem 0;
         background-color: white;
         border-radius: 4px;
+    }
+    .course-link {
+        color: #0066CC;
+        text-decoration: underline;
+        font-weight: bold;
+    }
+    .course-link:hover {
+        color: #0052A3;
+        text-decoration: underline;
     }
     .ai-status {
         color: #4CAF50;
@@ -259,14 +267,13 @@ def display_candidate_card(candidate: Dict[str, Any], index: int):
                 description += " No significant skill gaps identified."
         
         st.markdown(f"*{description}*")
-        st.markdown("<br>", unsafe_allow_html=True)
-        
         # Recommended Training Courses (1-2 courses)
         recommended_courses = candidate.get("recommended_courses", [])
         if recommended_courses:
-            st.markdown("**Recommended Training Courses:**")
+            st.markdown('<h4 style="color: #0066CC; font-size: 1.1em; margin-top: 0.25rem; margin-bottom: 0; padding-bottom: 0;">Recommended Training Courses:</h4>', unsafe_allow_html=True)
             for course in recommended_courses:
                 course_title = course.get("title", "Unknown Course")
+                course_url = course.get("url", "")
                 course_desc = course.get("description", "")
                 course_rationale = course.get("rationale", "")
                 # Use rationale if available, otherwise use description
@@ -275,8 +282,12 @@ def display_candidate_card(candidate: Dict[str, Any], index: int):
                     course_text = "Recommended to address skill gaps"
                 course_level = course.get("level", "N/A")
                 
-                st.markdown(f'<div class="course-card">', unsafe_allow_html=True)
-                st.markdown(f"**{course_title}**")
+                st.markdown(f'<div class="course-card" style="margin-top: 0 !important;">', unsafe_allow_html=True)
+                # Make title a clickable link if URL is available
+                if course_url:
+                    st.markdown(f'<a href="{course_url}" target="_blank" class="course-link"><strong>{course_title}</strong></a>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f"**{course_title}**")
                 st.markdown(f"*{course_text}*")
                 st.markdown(f"Level: {course_level}")
                 st.markdown(f'</div>', unsafe_allow_html=True)
@@ -505,11 +516,13 @@ def main():
                     st.warning("⚠️ Please enter a job description before searching.")
                 else:
                     # Clear right side pane first
+                    print(f"🔍 DEBUG: Button clicked - clearing results and setting processing flag")
                     st.session_state.results = None
                     st.session_state.messages = []
                     st.session_state.processing = True
                     # Store requirement text for processing
                     st.session_state.pending_requirement = requirement_text
+                    print(f"🔍 DEBUG: About to rerun - processing: {st.session_state.processing}, pending_requirement: {st.session_state.pending_requirement[:50] if st.session_state.pending_requirement else 'None'}")
                     st.rerun()
         
         with col_reset:
@@ -524,6 +537,7 @@ def main():
         # Process requirement if processing flag is set
         if st.session_state.processing and st.session_state.get('pending_requirement'):
             requirement_to_process = st.session_state.pending_requirement
+            print(f"🔍 DEBUG: Processing block entered - requirement: {requirement_to_process[:50]}...")
             with st.spinner("🔍 Analyzing talent pool..."):
                 try:
                     # Process requirement through orchestrator
@@ -537,30 +551,41 @@ def main():
                         for i, c in enumerate(candidates):
                             print(f"🔍 DEBUG: Result candidate {i+1}: {c.get('name', 'Unknown')} - {c.get('match_percentage', 0)}%")
                     
+                    # Store results BEFORE clearing processing flag
                     st.session_state.results = results
                     print(f"🔍 DEBUG: Results stored in session_state")
                     print(f"🔍 DEBUG: session_state.results is None: {st.session_state.results is None}")
+                    print(f"🔍 DEBUG: session_state.results type: {type(st.session_state.results)}")
+                    if st.session_state.results:
+                        print(f"🔍 DEBUG: session_state.results has candidates: {len(st.session_state.results.get('candidates', []))}")
                     
                     st.session_state.messages.append({
                         "role": "user",
                         "content": requirement_to_process
                     })
+                    # Clear processing flags AFTER storing results
                     st.session_state.processing = False
                     st.session_state.pending_requirement = None
-                    print(f"🔍 DEBUG: About to rerun...")
+                    print(f"🔍 DEBUG: About to rerun... Processing flag: {st.session_state.processing}")
+                    print(f"🔍 DEBUG: Results still in session_state before rerun: {st.session_state.results is not None}")
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Error processing requirement: {str(e)}")
                     import traceback
                     st.code(traceback.format_exc())
+                    print(f"🔍 DEBUG: Error occurred: {str(e)}")
                     st.session_state.processing = False
                     st.session_state.pending_requirement = None
                     st.rerun()
+        else:
+            print(f"🔍 DEBUG: Processing block NOT entered - processing: {st.session_state.processing}, pending_requirement: {st.session_state.get('pending_requirement') is not None}")
     
     # RIGHT COLUMN: Results Panel
     with col_right:
         # Debug info
         print(f"🔍 DEBUG: Right panel - session_state.results exists: {st.session_state.results is not None}")
+        print(f"🔍 DEBUG: Right panel - processing flag: {st.session_state.processing}")
+        print(f"🔍 DEBUG: Right panel - pending_requirement: {st.session_state.get('pending_requirement') is not None}")
         if st.session_state.results:
             print(f"🔍 DEBUG: Right panel - Results type: {type(st.session_state.results)}")
             if isinstance(st.session_state.results, dict):

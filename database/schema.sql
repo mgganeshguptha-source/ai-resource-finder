@@ -135,6 +135,7 @@ RETURNS TABLE (
     description TEXT,
     level TEXT,
     prerequisites TEXT[],
+    url TEXT,
     similarity float,
     metadata JSONB
 )
@@ -148,6 +149,7 @@ BEGIN
         tc.description,
         tc.level,
         tc.prerequisites,
+        tc.url,
         1 - (tc.embedding <=> query_embedding) as similarity,
         tc.metadata
     FROM training_courses tc

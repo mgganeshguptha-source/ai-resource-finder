@@ -78,6 +78,12 @@ class MatchingEngine:
             fetch_all=True
         )
         
+        # Convert Decimal similarity values to float to avoid type errors
+        if results:
+            for result in results:
+                if "similarity" in result and result["similarity"] is not None:
+                    result["similarity"] = float(result["similarity"])
+        
         return results or []
     
     def llm_rerank(self, candidates: List[Dict[str, Any]], requirement_text: str, 
@@ -284,11 +290,15 @@ Return ONLY a JSON array, no additional text:"""
             candidate_years = candidate.get("years_of_experience", {})
             years_scores = []
             for skill, min_yrs in min_years.items():
+                # Convert to float to handle Decimal types from database
+                min_yrs_float = float(min_yrs) if min_yrs is not None else 0.0
                 candidate_yrs = candidate_years.get(skill, 0.0)
-                if candidate_yrs >= min_yrs:
+                candidate_yrs_float = float(candidate_yrs) if candidate_yrs is not None else 0.0
+                
+                if candidate_yrs_float >= min_yrs_float:
                     years_scores.append(1.0)
-                elif candidate_yrs > 0:
-                    years_scores.append(candidate_yrs / min_yrs)  # Partial credit
+                elif candidate_yrs_float > 0:
+                    years_scores.append(candidate_yrs_float / min_yrs_float)  # Partial credit
                 else:
                     years_scores.append(0.0)
             years_score = sum(years_scores) / len(years_scores) if years_scores else 1.0
@@ -353,11 +363,13 @@ Return ONLY a JSON array, no additional text:"""
         
         # Step 3: Rule-based scoring and final score calculation
         for candidate in candidates:
-            # Get vector similarity score
-            vector_score = candidate.get("similarity", 0.0)
+            # Get vector similarity score (convert Decimal to float if needed)
+            similarity_value = candidate.get("similarity", 0.0)
+            vector_score = float(similarity_value) if similarity_value is not None else 0.0
             
-            # Get LLM score
-            llm_score = candidate.get("llm_score", 0.0)
+            # Get LLM score (convert Decimal to float if needed)
+            llm_score_value = candidate.get("llm_score", 0.0)
+            llm_score = float(llm_score_value) if llm_score_value is not None else 0.0
             
             # Calculate rule-based score
             rule_score = self.rule_based_scoring(candidate, parsed_requirement)
