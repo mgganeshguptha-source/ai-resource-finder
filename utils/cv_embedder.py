@@ -30,28 +30,27 @@ class CVEmbedder:
         )
         print(f"🔄 Using AWS Bedrock for embeddings: {self.embedding_model_id}")
     
-    def generate_embedding(self, text: str, target_dimension: int = 768) -> List[float]:
+    def generate_embedding(self, text: str) -> List[float]:
         """
         Generate embedding for text using Bedrock
         
         Args:
             text: Input text
-            target_dimension: Target dimension for embedding (default: 768 to match database)
             
         Returns:
-            Embedding vector truncated/padded to target_dimension
+            768-dimensional embedding vector (truncated from Bedrock's output if needed)
         """
         try:
             embedding = self.bedrock_client.get_embedding(text, self.embedding_model_id)
             # Database expects 768 dimensions, truncate if Bedrock returns more
-            # Bedrock Titan Embed v1 returns 1536 dimensions
-            if len(embedding) > target_dimension:
-                print(f"⚠️ Truncating Bedrock embedding from {len(embedding)} to {target_dimension} dimensions")
-                return embedding[:target_dimension]
-            elif len(embedding) < target_dimension:
+            # Bedrock models can return 1024 or 1536 dimensions depending on model
+            if len(embedding) > 768:
+                print(f"Truncating embedding from {len(embedding)} to 768 dimensions")
+                embedding = embedding[:768]
+            elif len(embedding) < 768:
                 # Pad with zeros if smaller (shouldn't happen with Bedrock)
-                print(f"⚠️ Padding embedding from {len(embedding)} to {target_dimension} dimensions")
-                return list(embedding) + [0.0] * (target_dimension - len(embedding))
+                print(f"Warning: Embedding has {len(embedding)} dimensions, padding to 768")
+                embedding = list(embedding) + [0.0] * (768 - len(embedding))
             return embedding
         except Exception as e:
             raise ValueError(f"Failed to generate embedding: {str(e)}")

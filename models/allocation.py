@@ -1,7 +1,6 @@
 """
 Allocation request data models
 """
-#allocation.py
 
 from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, Dict, Any

@@ -39,20 +39,7 @@ class DatabaseManager:
     
     def _ensure_connection(self):
         """Ensure database connection is alive"""
-        try:
-            # Check if connection is closed or invalid
-            if self.conn is None or self.conn.closed:
-                self._connect()
-            else:
-                # Test connection with a simple query
-                self.conn.cursor().execute("SELECT 1")
-        except (psycopg2.OperationalError, psycopg2.InterfaceError, AttributeError):
-            # Connection is dead, reconnect
-            try:
-                if self.conn:
-                    self.conn.close()
-            except:
-                pass
+        if self.conn is None or self.conn.closed:
             self._connect()
     
     @contextmanager
@@ -64,40 +51,15 @@ class DatabaseManager:
             cursor_factory: Cursor factory (e.g., RealDictCursor)
         """
         self._ensure_connection()
-        cursor = None
+        cursor = self.conn.cursor(cursor_factory=cursor_factory)
         try:
-            cursor = self.conn.cursor(cursor_factory=cursor_factory)
-            yield cursor
-            self.conn.commit()
-        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
-            # Connection lost, try to reconnect and retry once
-            try:
-                if cursor:
-                    cursor.close()
-            except:
-                pass
-            try:
-                if self.conn:
-                    self.conn.close()
-            except:
-                pass
-            self._connect()
-            cursor = self.conn.cursor(cursor_factory=cursor_factory)
             yield cursor
             self.conn.commit()
         except Exception as e:
-            if self.conn:
-                try:
-                    self.conn.rollback()
-                except:
-                    pass
+            self.conn.rollback()
             raise e
         finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except:
-                    pass
+            cursor.close()
     
     def execute_query(self, query: str, params: tuple = None, fetch_one: bool = False, fetch_all: bool = True) -> Optional[List[Dict[str, Any]]]:
         """

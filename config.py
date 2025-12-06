@@ -58,18 +58,14 @@ class Config:
         self.course_rule_weight = float(self._get_env_var("COURSE_RULE_WEIGHT", "0.20"))
         
         # Search Configuration
-        self.top_n_candidates = int(self._get_env_var("TOP_N_CANDIDATES", "30"))
+        self.top_n_candidates = int(self._get_env_var("TOP_N_CANDIDATES", "10"))
         self.top_n_courses = int(self._get_env_var("TOP_N_COURSES", "10"))
         self.final_top_candidates = int(self._get_env_var("FINAL_TOP_CANDIDATES", "3"))
-        self.final_top_courses = int(self._get_env_var("FINAL_TOP_COURSES", "2"))  # Default to 2 courses
+        self.final_top_courses = int(self._get_env_var("FINAL_TOP_COURSES", "3"))
         
         # Thresholds
         self.match_threshold_strong = float(self._get_env_var("MATCH_THRESHOLD_STRONG", "0.75"))
         self.match_threshold_moderate = float(self._get_env_var("MATCH_THRESHOLD_MODERATE", "0.50"))
-        # Minimum match percentage to display candidates (0-100) - only show candidates with >50% match
-        self.min_match_percentage = float(self._get_env_var("MIN_MATCH_PERCENTAGE", "50"))
-        # Vector search similarity threshold (0-1) - lower means more candidates
-        self.vector_search_threshold = float(self._get_env_var("VECTOR_SEARCH_THRESHOLD", "0.2"))
         
         # Validate required configuration
         self._validate_config()

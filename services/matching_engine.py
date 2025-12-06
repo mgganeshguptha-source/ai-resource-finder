@@ -6,18 +6,12 @@ from typing import List, Dict, Any, Optional
 import json
 import sys
 import os
-
-# Add project root to Python path for imports
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.database import DatabaseManager
 from utils.bedrock_client import BedrockClient
-from ingestion.cv_embedder import CVEmbedder
 from services.gap_analyzer import GapAnalyzer
 from models.candidate import CandidateProfile
-from utils.skill_normalizer import SkillNormalizer
 from config import Config
 
 
@@ -40,10 +34,20 @@ class MatchingEngine:
             region_name=self.config.aws_region,
             model_id=self.config.bedrock_model_id
         )
-        self.embedder = CVEmbedder(
-            self.config.embedding_model_name,
-            bedrock_client=self.bedrock_client if self.config.embedding_model_name.startswith("amazon.titan") else None
-        )
+        
+        # Use Bedrock embedder for AWS Titan models, otherwise use HuggingFace embedder
+        embedding_model_name = self.config.embedding_model_name
+        if embedding_model_name and embedding_model_name.startswith("amazon.titan"):
+            # Use Bedrock-based embedder for AWS Titan models
+            from utils.cv_embedder import CVEmbedder
+            self.embedder = CVEmbedder(
+                model_name=embedding_model_name,
+                bedrock_client=self.bedrock_client
+            )
+        else:
+            # Use HuggingFace-based embedder for other models
+            from ingestion.cv_embedder import CVEmbedder
+            self.embedder = CVEmbedder(embedding_model_name or "sentence-transformers/all-MiniLM-L6-v2")
     
     def vector_search(self, requirement_text: str, top_n: int = 30) -> List[Dict[str, Any]]:
         """
@@ -60,32 +64,21 @@ class MatchingEngine:
         query_embedding = self.embedder.generate_embedding(requirement_text)
         
         # Query database using cosine similarity
-        # Use configurable threshold from config, default to 0.2 if not set
-        threshold = getattr(self.config, 'vector_search_threshold', 0.2)
         query = """
             SELECT * FROM cosine_similarity_search_candidates(
                 %s::vector,
-                %s,
+                0.3,
                 %s
             )
         """
         
         results = self.db_manager.execute_query(
             query,
-            params=(query_embedding, threshold, top_n),
+            params=(query_embedding, top_n),
             fetch_all=True
         )
         
-        results_list = results or []
-        
-        # Debug logging
-        if not results_list:
-            print(f"⚠️ Vector search returned 0 candidates with threshold={threshold}")
-        else:
-            similarities = [r.get("similarity", 0) for r in results_list]
-            print(f"ℹ️ Vector search found {len(results_list)} candidates with similarities: {similarities[:5]}")
-        
-        return results_list
+        return results or []
     
     def llm_rerank(self, candidates: List[Dict[str, Any]], requirement_text: str, 
                    parsed_requirement: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -120,18 +113,42 @@ class MatchingEngine:
         # Prepare candidate summaries for LLM
         candidate_summaries = []
         for candidate in candidates:
-            skills = list(candidate.get("extracted_skills", {}).keys())[:10]  # Limit skills
-            summary = f"Name: {candidate.get('name', 'Unknown')}\n"
-            summary += f"Skills: {', '.join(skills)}\n"
-            summary += f"Years of Experience: {candidate.get('years_of_experience', {})}\n"
-            summary += f"Domains: {', '.join(candidate.get('domain_tags', [])[:5])}"
+            # Get name
+            name = candidate.get('name', 'Unknown')
             
-            # Add experience summary if available
+            # Get all skills
+            extracted_skills = candidate.get("extracted_skills", {})
+            skills = list(extracted_skills.keys())
+            
+            # Format years of experience as readable string
+            years_of_experience = candidate.get('years_of_experience', {})
+            years_formatted = []
+            if isinstance(years_of_experience, dict):
+                for skill, years in years_of_experience.items():
+                    if years and years > 0:
+                        years_formatted.append(f"{skill}: {years} years")
+            years_str = ', '.join(years_formatted) if years_formatted else "Not specified"
+            
+            # Get all domains
+            domain_tags = candidate.get('domain_tags', [])
+            domains_str = ', '.join(domain_tags) if domain_tags else "Not specified"
+            
+            # Get experience summary
             experience_summary = candidate.get('experience_summary', '')
-            if experience_summary:
-                summary += f"\nExperience Summary: {experience_summary}"
+            if not experience_summary:
+                experience_summary = "Not available"
             
+            # Build comprehensive summary
+            summary = f"Name: {name}\n"
+            summary += f"Skills: {', '.join(skills) if skills else 'Not specified'}\n"
+            summary += f"Years of Experience: {years_str}\n"
+            summary += f"Domains: {domains_str}\n"
+            summary += f"Experience Summary: {experience_summary}"
             candidate_summaries.append(summary)
+        
+        # Format seniority for prompt (show "Not specified" if empty)
+        seniority = parsed_requirement.get('seniority', '')
+        seniority_display = seniority if seniority else "Not specified"
         
         prompt = f"""Evaluate and rank these candidates for the following requirement:
 
@@ -139,8 +156,8 @@ Requirement: {requirement_text}
 
 Required Skills: {', '.join(parsed_requirement.get('required_skills', []))}
 Preferred Skills: {', '.join(parsed_requirement.get('preferred_skills', []))}
-Domain: {parsed_requirement.get('domain', '')}
-Seniority: {parsed_requirement.get('seniority', 'mid')}
+Domain: {parsed_requirement.get('domain', '') or 'Not specified'}
+Seniority: {seniority_display}
 
 Candidates:
 {chr(10).join([f"{i+1}. {summary}" for i, summary in enumerate(candidate_summaries)])}
@@ -154,12 +171,6 @@ For each candidate, return a JSON array with:
     "proficiency_insights": "<brief assessment>",
     "evidence_snippets": ["evidence1", "evidence2", ...]
 }}
-
-Important: Pay special attention to the Experience Summary section. Even if a skill is not explicitly listed, 
-the candidate may have relevant experience described in their project descriptions. For example:
-- "database migration" experience might be in project descriptions even if not in the skills list
-- Client names and industries (e.g., "IQVIA" = lifescience) indicate domain experience
-- Project scale and impact (e.g., "migrated 5TB database") demonstrate real-world expertise
 
 Return ONLY a JSON array, no additional text:"""
 
@@ -214,55 +225,85 @@ Return ONLY a JSON array, no additional text:"""
         """
         scores = []
         
-        # Rule 1: Must-have skills (weight: 0.4)
+        # Base weights
+        BASE_REQUIRED_WEIGHT = 0.40
+        BASE_PREFERRED_WEIGHT = 0.20
+        BASE_DOMAIN_WEIGHT = 0.15
+        BASE_YEARS_WEIGHT = 0.15
+        PROFICIENCY_WEIGHT = 0.10  # Removed, weight redistributed to required skills
+        
+        # Start with required skills weight (includes proficiency weight since proficiency is removed)
+        required_skills_weight = BASE_REQUIRED_WEIGHT + PROFICIENCY_WEIGHT  # 0.40 + 0.10 = 0.50
+        
+        # Rule 1: Must-have skills (mandatory)
         required_skills = parsed_requirement.get("required_skills", [])
         candidate_skills = set(candidate.get("extracted_skills", {}).keys())
         matched_required = sum(1 for skill in required_skills if skill in candidate_skills)
         required_score = (matched_required / len(required_skills)) if required_skills else 1.0
-        scores.append(("required_skills", required_score, 0.4))
         
-        # Rule 2: Preferred skills (weight: 0.2)
+        # Rule 2: Preferred skills (only if JD mentions preferred skills)
         preferred_skills = parsed_requirement.get("preferred_skills", [])
-        matched_preferred = sum(1 for skill in preferred_skills if skill in candidate_skills)
-        preferred_score = (matched_preferred / len(preferred_skills)) if preferred_skills else 1.0
-        scores.append(("preferred_skills", preferred_score, 0.2))
+        preferred_skills_weight = 0.0
+        preferred_score = 0.0
         
-        # Rule 3: Domain match (weight: 0.15)
-        required_domain = parsed_requirement.get("domain", "").lower()
-        candidate_domains = [d.lower() for d in candidate.get("domain_tags", [])]
-        domain_score = 1.0 if (not required_domain or 
-                              any(required_domain in d or d in required_domain for d in candidate_domains)) else 0.0
-        scores.append(("domain", domain_score, 0.15))
+        if preferred_skills:
+            # JD mentions preferred skills, use it
+            matched_preferred = sum(1 for skill in preferred_skills if skill in candidate_skills)
+            preferred_score = (matched_preferred / len(preferred_skills)) if preferred_skills else 0.0
+            preferred_skills_weight = BASE_PREFERRED_WEIGHT
+            scores.append(("preferred_skills", preferred_score, preferred_skills_weight))
+        else:
+            # JD doesn't mention preferred skills, skip and redistribute weight to required skills
+            required_skills_weight += BASE_PREFERRED_WEIGHT
         
-        # Rule 4: Years of experience (weight: 0.15)
+        # Rule 3: Domain match (only if domain is identified)
+        required_domain = parsed_requirement.get("domain", "") or ""
+        required_domain = required_domain.strip() if isinstance(required_domain, str) else ""
+        domain_weight = 0.0
+        domain_score = 0.0
+        
+        if required_domain:
+            # Domain is identified, perform domain match
+            required_domain_lower = required_domain.lower()
+            candidate_domains = [d.lower() for d in candidate.get("domain_tags", [])]
+            domain_score = 1.0 if any(required_domain_lower in d or d in required_domain_lower 
+                                      for d in candidate_domains) else 0.0
+            domain_weight = BASE_DOMAIN_WEIGHT
+            scores.append(("domain", domain_score, domain_weight))
+        else:
+            # Domain not identified, skip and redistribute weight to required skills
+            required_skills_weight += BASE_DOMAIN_WEIGHT
+        
+        # Rule 4: Years of experience (only if explicitly mentioned in JD)
         min_years = parsed_requirement.get("min_years_per_skill", {})
-        candidate_years = candidate.get("years_of_experience", {})
-        years_scores = []
-        for skill, min_yrs in min_years.items():
-            candidate_yrs = candidate_years.get(skill, 0.0)
-            if candidate_yrs >= min_yrs:
-                years_scores.append(1.0)
-            elif candidate_yrs > 0:
-                years_scores.append(candidate_yrs / min_yrs)  # Partial credit
-            else:
-                years_scores.append(0.0)
-        years_score = sum(years_scores) / len(years_scores) if years_scores else 1.0
-        scores.append(("years", years_score, 0.15))
+        years_weight = 0.0
+        years_score = 0.0
         
-        # Rule 5: Proficiency verbs (weight: 0.1)
-        # Check for strong proficiency indicators in extracted skills
-        proficiency_keywords = ["expert", "advanced", "senior", "lead", "architect"]
-        candidate_skills_data = candidate.get("extracted_skills", {})
-        proficiency_count = sum(1 for skill_data in candidate_skills_data.values() 
-                              if isinstance(skill_data, dict) and 
-                              any(kw in str(skill_data.get("proficiency", "")).lower() 
-                                  for kw in proficiency_keywords))
-        proficiency_score = min(proficiency_count / max(len(required_skills), 1), 1.0)
-        scores.append(("proficiency", proficiency_score, 0.1))
+        if min_years and isinstance(min_years, dict) and len(min_years) > 0:
+            # Years of experience explicitly mentioned, perform years match
+            candidate_years = candidate.get("years_of_experience", {})
+            years_scores = []
+            for skill, min_yrs in min_years.items():
+                candidate_yrs = candidate_years.get(skill, 0.0)
+                if candidate_yrs >= min_yrs:
+                    years_scores.append(1.0)
+                elif candidate_yrs > 0:
+                    years_scores.append(candidate_yrs / min_yrs)  # Partial credit
+                else:
+                    years_scores.append(0.0)
+            years_score = sum(years_scores) / len(years_scores) if years_scores else 1.0
+            years_weight = BASE_YEARS_WEIGHT
+            scores.append(("years", years_score, years_weight))
+        else:
+            # Years of experience not mentioned, skip and redistribute weight to required skills
+            required_skills_weight += BASE_YEARS_WEIGHT
         
-        # Calculate weighted sum
+        # Add required skills score with dynamically calculated weight
+        scores.append(("required_skills", required_score, required_skills_weight))
+        
+        # Calculate weighted sum (total should always be 1.0)
         total_score = sum(score * weight for _, score, weight in scores)
-        return total_score
+        return min(max(total_score, 0.0), 1.0)  # Clamp to 0-1
     
     def calculate_final_score(self, vector_score: float, llm_score: float, rule_score: float) -> float:
         """
@@ -297,24 +338,26 @@ Return ONLY a JSON array, no additional text:"""
             List of top candidates with all scores and analysis
         """
         # Step 1: Vector search
+        print(f"🔍 DEBUG: MatchingEngine.vector_search called with top_n={self.config.top_n_candidates}")
         candidates = self.vector_search(requirement_text, self.config.top_n_candidates)
+        print(f"🔍 DEBUG: Vector search returned {len(candidates)} candidates")
         
         if not candidates:
-            print("⚠️ No candidates found in vector search - check vector_search_threshold and database embeddings")
+            print("🔍 DEBUG: No candidates from vector search, returning empty list")
             return []
         
-        print(f"ℹ️ Starting matching pipeline with {len(candidates)} candidates from vector search")
-        
         # Step 2: LLM re-ranking
+        print(f"🔍 DEBUG: Starting LLM re-ranking for {len(candidates)} candidates")
         candidates = self.llm_rerank(candidates, requirement_text, parsed_requirement)
+        print(f"🔍 DEBUG: LLM re-ranking completed")
         
         # Step 3: Rule-based scoring and final score calculation
         for candidate in candidates:
-            # Get vector similarity score - convert to float to handle Decimal types from PostgreSQL
-            vector_score = float(candidate.get("similarity", 0.0))
+            # Get vector similarity score
+            vector_score = candidate.get("similarity", 0.0)
             
             # Get LLM score
-            llm_score = float(candidate.get("llm_score", 0.0))
+            llm_score = candidate.get("llm_score", 0.0)
             
             # Calculate rule-based score
             rule_score = self.rule_based_scoring(candidate, parsed_requirement)
@@ -325,48 +368,20 @@ Return ONLY a JSON array, no additional text:"""
             candidate["final_score"] = final_score
             candidate["match_percentage"] = round(final_score * 100)
             
-            # Analyze gaps - filter candidate dict to only include CandidateProfile fields
-            # and provide defaults for missing fields
-            profile_fields = {
-                "name", "email", "raw_text", "extracted_skills", "years_of_experience",
-                "domain_tags", "embedding", "cv_s3_key", "cv_s3_url", "id",
-                "created_at", "updated_at"
-            }
-            profile_data = {k: v for k, v in candidate.items() if k in profile_fields}
-            
-            # Ensure required fields have defaults if missing (vector search doesn't return all fields)
-            if "raw_text" not in profile_data or not profile_data.get("raw_text"):
-                profile_data["raw_text"] = ""  # Default empty string for raw_text
-            if "extracted_skills" not in profile_data:
-                profile_data["extracted_skills"] = {}
-            if "years_of_experience" not in profile_data:
-                profile_data["years_of_experience"] = {}
-            if "domain_tags" not in profile_data:
-                profile_data["domain_tags"] = []
-            
+            # Analyze gaps
             gaps = GapAnalyzer.analyze_gaps(
-                CandidateProfile(**profile_data),
+                CandidateProfile(**candidate),
                 parsed_requirement.get("required_skills", []),
                 parsed_requirement.get("min_years_per_skill", {})
             )
             candidate["gaps"] = gaps
-            
-            # Normalize matched_skills and remove duplicates/variations
-            matched_skills = candidate.get("matched_skills", [])
-            if matched_skills:
-                # Remove skills that appear in gaps (duplicates)
-                gap_skill_names = {SkillNormalizer.normalize_skill(gap.get("skill", "")) for gap in gaps}
-                matched_skills_filtered = [
-                    skill for skill in matched_skills
-                    if SkillNormalizer.normalize_skill(skill) not in gap_skill_names
-                ]
-                # Remove duplicate variations
-                candidate["matched_skills"] = SkillNormalizer.remove_duplicate_skills(matched_skills_filtered)
-            else:
-                candidate["matched_skills"] = []
         
         # Sort by final score and return top N
         candidates.sort(key=lambda x: x.get("final_score", 0.0), reverse=True)
-        return candidates[:top_n]
+        final_candidates = candidates[:top_n]
+        print(f"🔍 DEBUG: Returning {len(final_candidates)} final candidates (top_n={top_n})")
+        for i, c in enumerate(final_candidates):
+            print(f"🔍 DEBUG: Final candidate {i+1}: {c.get('name', 'Unknown')} - Score: {c.get('final_score', 0):.2f}, Match: {c.get('match_percentage', 0)}%")
+        return final_candidates
 
 

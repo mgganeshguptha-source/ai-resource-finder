@@ -144,38 +144,65 @@ class BedrockClient:
             responses.append(response)
         return responses
     
-    def get_embedding(self, text: str, embedding_model_id: str = "amazon.titan-embed-text-v1") -> List[float]:
+    def get_embedding(self, text: str, embedding_model_id: Optional[str] = None) -> List[float]:
         """
-        Generate embedding using Bedrock Titan Embed model
+        Generate embedding for text using AWS Bedrock embedding models
         
         Args:
             text: Input text to embed
-            embedding_model_id: Bedrock embedding model ID (default: amazon.titan-embed-text-v1)
+            embedding_model_id: Optional embedding model ID (defaults to instance model_id)
             
         Returns:
-            Embedding vector as list of floats
+            List of floats representing the embedding vector
         """
         try:
-            body = {
-                "inputText": text
-            }
+            model_id = embedding_model_id or self.model_id
             
+            # Prepare request body for embedding models
+            if "titan-embed" in model_id.lower():
+                # Amazon Titan Embeddings format
+                body = {
+                    "inputText": text
+                }
+            elif "embed" in model_id.lower():
+                # Generic embedding model format
+                body = {
+                    "inputText": text
+                }
+            else:
+                # Default format for embedding models
+                body = {
+                    "inputText": text
+                }
+            
+            # Invoke the embedding model
             response = self.bedrock_runtime.invoke_model(
-                modelId=embedding_model_id,
+                modelId=model_id,
                 body=json.dumps(body)
             )
             
             response_body = json.loads(response['body'].read())
             
-            # Titan embed returns embedding in 'embedding' field
-            if 'embedding' in response_body:
-                return response_body['embedding']
+            # Extract embedding vector from response
+            if "titan-embed" in model_id.lower():
+                # Amazon Titan Embeddings response format
+                embedding = response_body.get('embedding', [])
+            elif "embedding" in response_body:
+                embedding = response_body['embedding']
             else:
-                raise ValueError(f"Unexpected response format from Bedrock: {response_body}")
+                # Try to find embedding in response
+                embedding = response_body.get('embedding', response_body.get('vector', []))
+            
+            if not embedding:
+                raise ValueError(f"Could not extract embedding from response: {response_body}")
+            
+            return list(embedding)
                 
         except ClientError as e:
             error_code = e.response['Error']['Code']
             error_message = e.response['Error']['Message']
             raise Exception(f"Bedrock embedding API error ({error_code}): {error_message}")
+        except Exception as e:
+            raise Exception(f"Failed to generate embedding: {str(e)}")
 
 

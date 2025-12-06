@@ -2,18 +2,9 @@
 CourseAgent - Recommends training courses for skill gaps
 """
 
-import sys
-import os
-
-# Add project root to Python path for imports
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
 from typing import List, Dict, Any
 from utils.database import DatabaseManager
 from utils.bedrock_client import BedrockClient
-from ingestion.cv_embedder import CVEmbedder
 from models.course import TrainingCourse, CourseRecommendation
 from config import Config
 
@@ -33,10 +24,20 @@ class CourseAgent:
         self.db_manager = db_manager
         self.bedrock_client = bedrock_client
         self.config = config
-        self.embedder = CVEmbedder(
-            config.embedding_model_name,
-            bedrock_client=bedrock_client if config.embedding_model_name.startswith("amazon.titan") else None
-        )
+        
+        # Use Bedrock embedder for AWS Titan models, otherwise use HuggingFace embedder
+        embedding_model_name = config.embedding_model_name
+        if embedding_model_name and embedding_model_name.startswith("amazon.titan"):
+            # Use Bedrock-based embedder for AWS Titan models
+            from utils.cv_embedder import CVEmbedder
+            self.embedder = CVEmbedder(
+                model_name=embedding_model_name,
+                bedrock_client=bedrock_client
+            )
+        else:
+            # Use HuggingFace-based embedder for other models
+            from ingestion.cv_embedder import CVEmbedder
+            self.embedder = CVEmbedder(embedding_model_name or "sentence-transformers/all-MiniLM-L6-v2")
     
     def recommend_courses(self, gaps: List[Dict[str, Any]], candidate_profile: Dict[str, Any]) -> List[CourseRecommendation]:
         """
@@ -47,7 +48,7 @@ class CourseAgent:
             candidate_profile: Candidate profile dictionary
             
         Returns:
-            List of top 3 course recommendations
+            List of 1-2 course recommendations (minimum 1 if gaps exist, maximum 2)
         """
         if not gaps:
             return []
@@ -62,11 +63,29 @@ class CourseAgent:
         
         gap_query = f"Gap: {', '.join(gap_descriptions[:5])}, intermediate level"
         
-        # Step 1: Vector search courses
+        # Step 1: Vector search courses (try with lower threshold if needed)
         courses = self._vector_search_courses(gap_query, self.config.top_n_courses)
         
+        # If no courses found, try with lower similarity threshold
         if not courses:
-            print(f"⚠️ No courses found from vector search for gaps: {[g.get('skill', '') for g in gaps[:3]]}")
+            courses = self._vector_search_courses_lower_threshold(gap_query, self.config.top_n_courses)
+        
+        # If still no courses, try a broader search
+        if not courses:
+            # Try searching with just the skill names
+            gap_skills = [gap.get("skill", "") for gap in gaps[:3]]
+            if gap_skills:
+                broader_query = f"Training course for: {', '.join(gap_skills)}"
+                courses = self._vector_search_courses_lower_threshold(broader_query, self.config.top_n_courses)
+        
+        # If still no courses, try to get any courses from database (fallback)
+        if not courses:
+            courses = self._get_any_courses_from_db(self.config.top_n_courses)
+        
+        # If still no courses found, create a generic recommendation
+        if not courses:
+            print(f"⚠️ No courses found in database for gaps: {[gap.get('skill') for gap in gaps]}")
+            # Return empty - will be handled by orchestrator to show message
             return []
         
         # Step 2: LLM re-ranking
@@ -78,9 +97,8 @@ class CourseAgent:
             course["rule_score"] = rule_score
             
             # Calculate final course score
-            # Convert to float to handle Decimal types from PostgreSQL
-            vector_score = float(course.get("similarity", 0.0))
-            llm_score = float(course.get("llm_score", 0.0))
+            vector_score = course.get("similarity", 0.0)
+            llm_score = course.get("llm_score", 0.0)
             final_score = (
                 self.config.course_vector_weight * vector_score +
                 self.config.course_llm_weight * llm_score +
@@ -88,16 +106,28 @@ class CourseAgent:
             )
             course["final_score"] = final_score
         
-        # Sort and get top courses (configurable, default 2)
+        # Sort and get top courses (minimum 1, maximum 2)
         courses.sort(key=lambda x: x.get("final_score", 0.0), reverse=True)
-        max_courses = min(self.config.final_top_courses, 2)  # Limit to max 2 courses
-        top_courses = courses[:max_courses]
+        
+        # Determine how many courses to recommend
+        # If one course can address all gaps, recommend 1; otherwise recommend up to 2
+        num_courses = 1
+        if len(gaps) > 1:
+            # Check if top course addresses multiple gaps
+            top_course_gaps = courses[0].get("gaps_addressed", []) if courses else []
+            if len(top_course_gaps) < len(gaps) and len(courses) > 1:
+                num_courses = 2
+        
+        # Ensure we have at least 1 course if gaps exist
+        top_courses = courses[:min(num_courses, 2)]
         
         # Convert to CourseRecommendation objects
         recommendations = []
         for course in top_courses:
-            # Extract gaps addressed
-            gaps_addressed = [gap.get("skill") for gap in gaps[:3]]  # Top 3 gaps
+            # Extract gaps addressed from LLM or use top gaps
+            gaps_addressed = course.get("gaps_addressed", [])
+            if not gaps_addressed:
+                gaps_addressed = [gap.get("skill") for gap in gaps[:2]]  # Top 2 gaps
             
             recommendation = CourseRecommendation(
                 course=TrainingCourse(
@@ -106,7 +136,6 @@ class CourseAgent:
                     description=course.get("description", ""),
                     level=course.get("level"),
                     prerequisites=course.get("prerequisites", []),
-                    url=course.get("url"),
                     metadata=course.get("metadata", {})
                 ),
                 score=course.get("final_score", 0.0),
@@ -115,46 +144,95 @@ class CourseAgent:
             )
             recommendations.append(recommendation)
         
+        # Ensure at least 1 recommendation if gaps exist
+        if not recommendations and courses:
+            # Fallback: use top course even if scoring is low
+            top_course = courses[0]
+            gaps_addressed = [gap.get("skill") for gap in gaps[:2]]
+            recommendation = CourseRecommendation(
+                course=TrainingCourse(
+                    id=top_course.get("id"),
+                    title=top_course.get("title", ""),
+                    description=top_course.get("description", ""),
+                    level=top_course.get("level"),
+                    prerequisites=top_course.get("prerequisites", []),
+                    metadata=top_course.get("metadata", {})
+                ),
+                score=top_course.get("final_score", 0.0),
+                rationale=f"Recommended to address gaps in {', '.join(gaps_addressed)}",
+                gaps_addressed=gaps_addressed
+            )
+            recommendations.append(recommendation)
+        
         return recommendations
     
     def _vector_search_courses(self, gap_query: str, top_n: int) -> List[Dict[str, Any]]:
-        """Vector search for courses with multi-threshold fallback"""
+        """Vector search for courses with standard threshold"""
         query_embedding = self.embedder.generate_embedding(gap_query)
         
-        # Try with multiple thresholds (0.1, then 0.0) to ensure we get results
-        thresholds = [0.1, 0.0]
-        results = []
-        for threshold in thresholds:
-            query = """
-                SELECT id, title, description, level, prerequisites, url, metadata, 1 - (embedding <=> %s::vector) as similarity
-                FROM training_courses
-                WHERE 1 - (embedding <=> %s::vector) > %s
-                ORDER BY similarity DESC
-                LIMIT %s
-            """
-            results = self.db_manager.execute_query(
-                query,
-                params=(query_embedding, query_embedding, threshold, top_n),
-                fetch_all=True
+        query = """
+            SELECT * FROM cosine_similarity_search_courses(
+                %s::vector,
+                0.3,
+                %s
             )
-            if results:
-                print(f"📊 Found {len(results)} courses from vector search with threshold {threshold}")
-                return results
-        
-        # Fallback: if vector search still yields no results, get all courses
-        print("⚠️ Vector search returned no results even with low threshold. Falling back to all courses.")
-        all_courses_query = """
-            SELECT id, title, description, level, prerequisites, url, metadata, 0.0 as similarity
-            FROM training_courses
-            LIMIT %s
         """
+        
         results = self.db_manager.execute_query(
-            all_courses_query,
-            params=(top_n,),
+            query,
+            params=(query_embedding, top_n),
             fetch_all=True
         )
-        print(f"📊 Found {len(results)} courses from fallback (all courses)")
+        
         return results or []
+    
+    def _vector_search_courses_lower_threshold(self, gap_query: str, top_n: int) -> List[Dict[str, Any]]:
+        """Vector search for courses with lower threshold (fallback)"""
+        query_embedding = self.embedder.generate_embedding(gap_query)
+        
+        query = """
+            SELECT * FROM cosine_similarity_search_courses(
+                %s::vector,
+                0.1,
+                %s
+            )
+        """
+        
+        results = self.db_manager.execute_query(
+            query,
+            params=(query_embedding, top_n),
+            fetch_all=True
+        )
+        
+        return results or []
+    
+    def _get_any_courses_from_db(self, top_n: int) -> List[Dict[str, Any]]:
+        """Get any courses from database as fallback (no similarity filtering)"""
+        try:
+            query = """
+                SELECT 
+                    id,
+                    title,
+                    description,
+                    level,
+                    prerequisites,
+                    0.5 as similarity,
+                    metadata
+                FROM training_courses
+                ORDER BY created_at DESC
+                LIMIT %s
+            """
+            
+            results = self.db_manager.execute_query(
+                query,
+                params=(top_n,),
+                fetch_all=True
+            )
+            
+            return results or []
+        except Exception as e:
+            print(f"⚠️ Error fetching courses from database: {str(e)}")
+            return []
     
     def _llm_rerank_courses(self, courses: List[Dict[str, Any]], gaps: List[Dict[str, Any]],
                            candidate_profile: Dict[str, Any]) -> List[Dict[str, Any]]:

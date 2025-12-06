@@ -6,11 +6,7 @@ import json
 from typing import Dict, Any, Optional
 import sys
 import os
-
-# Add project root to Python path for imports
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.bedrock_client import BedrockClient
 from config import Config
@@ -53,6 +49,7 @@ Please extract and return a JSON object with the following structure:
     "required_skills": ["Skill1", "Skill2", ...],
     "preferred_skills": ["Skill1", "Skill2", ...],
     "domain": "<domain/category>",
+    "customer_name": "<customer/client name if mentioned>",
     "min_years_per_skill": {{
         "Skill1": <minimum years>,
         "Skill2": <minimum years>
@@ -64,10 +61,12 @@ Please extract and return a JSON object with the following structure:
 Guidelines:
 - Identify must-have skills (required_skills)
 - Identify nice-to-have skills (preferred_skills)
-- Extract domain/category (e.g., "Cloud Computing", "Data Science")
-- Estimate minimum years of experience per skill if mentioned
-- Determine seniority level from context
+- Extract domain/category ONLY if explicitly mentioned (e.g., "Cloud Computing", "Data Science")
+- Extract customer/client name if mentioned in the requirement
+- Extract minimum years of experience per skill ONLY if explicitly mentioned in the requirement
+- Extract seniority level ONLY if explicitly mentioned (junior|mid|senior|lead|architect)
 - Note any skills/technologies to exclude
+- If domain, experience, or seniority are NOT mentioned, set them to null or empty string
 - Return ONLY valid JSON, no additional text
 
 Return the JSON object:"""
@@ -75,15 +74,29 @@ Return the JSON object:"""
         try:
             result = self.bedrock_client.invoke_model_json(prompt, max_tokens=2048)
             
-            # Validate and set defaults
+            # Extract customer name
+            customer_name = result.get("customer_name", "")
+            
+            # Get domain from result
+            domain = result.get("domain", "")
+            
+            # If domain is not mentioned but customer name is, identify domain from customer name
+            if not domain and customer_name:
+                domain = self._identify_domain_from_customer(customer_name)
+            
+            # Validate and set values (skip defaults for experience and seniority if not mentioned)
             parsed = {
                 "required_skills": result.get("required_skills", []),
                 "preferred_skills": result.get("preferred_skills", []),
-                "domain": result.get("domain", ""),
+                "domain": domain,
                 "min_years_per_skill": result.get("min_years_per_skill", {}),
-                "seniority": result.get("seniority", "mid"),
+                "seniority": result.get("seniority", ""),  # Empty string if not mentioned
                 "exclusions": result.get("exclusions", [])
             }
+            
+            # Remove empty min_years_per_skill if not mentioned
+            if not parsed["min_years_per_skill"] or parsed["min_years_per_skill"] == {}:
+                parsed["min_years_per_skill"] = {}
             
             # Ensure lists are lists
             if not isinstance(parsed["required_skills"], list):
@@ -102,8 +115,48 @@ Return the JSON object:"""
                 "preferred_skills": [],
                 "domain": "",
                 "min_years_per_skill": {},
-                "seniority": "mid",
+                "seniority": "",
                 "exclusions": []
             }
+    
+    def _identify_domain_from_customer(self, customer_name: str) -> str:
+        """
+        Identify domain from customer name using LLM
+        
+        Args:
+            customer_name: Name of the customer/client
+            
+        Returns:
+            Domain/category identified from customer name
+        """
+        prompt = f"""Based on the customer/client name, identify the most likely business domain or industry category.
+
+Customer/Client Name: {customer_name}
+
+Please identify the domain/category this customer typically operates in. Examples:
+- "Cloud Computing" for AWS, Azure, GCP
+- "Banking" for financial institutions
+- "Healthcare" for medical/health companies
+- "Retail" for e-commerce/retail companies
+- "Manufacturing" for industrial companies
+- "Telecommunications" for telecom companies
+- "Data Science" for analytics/data companies
+
+Return ONLY a JSON object with this structure:
+{{
+    "domain": "<identified domain/category>"
+}}
+
+If you cannot determine the domain, return an empty string for domain.
+
+Return ONLY valid JSON, no additional text:"""
+
+        try:
+            result = self.bedrock_client.invoke_model_json(prompt, max_tokens=512)
+            domain = result.get("domain", "")
+            return domain if domain else ""
+        except Exception as e:
+            print(f"⚠️ Error identifying domain from customer name: {str(e)}")
+            return ""
 
 

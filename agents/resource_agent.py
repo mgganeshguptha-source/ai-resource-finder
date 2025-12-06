@@ -2,14 +2,6 @@
 ResourceAgent - Finds and ranks associates for resource requirements
 """
 
-import sys
-import os
-
-# Add project root to Python path for imports
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
 from typing import List, Dict, Any
 from utils.database import DatabaseManager
 from utils.bedrock_client import BedrockClient
@@ -50,35 +42,20 @@ class ResourceAgent:
             List of top candidates with match scores, skills, gaps, and evidence
         """
         # Use matching engine to find candidates
+        print(f"🔍 DEBUG: ResourceAgent.find_candidates called with top_n={top_n}")
         candidates = self.matching_engine.match_candidates(
             requirement_text,
             parsed_requirement,
             top_n
         )
+        print(f"🔍 DEBUG: MatchingEngine returned {len(candidates)} candidates")
         
         # Enhance with additional analysis
         for candidate in candidates:
-            # Add domain gap analysis - filter candidate dict to only include CandidateProfile fields
-            # and provide defaults for missing fields
-            profile_fields = {
-                "name", "email", "raw_text", "extracted_skills", "years_of_experience",
-                "domain_tags", "embedding", "cv_s3_key", "cv_s3_url", "id",
-                "created_at", "updated_at"
-            }
-            profile_data = {k: v for k, v in candidate.items() if k in profile_fields}
-            
-            # Ensure required fields have defaults if missing (vector search doesn't return all fields)
-            if "raw_text" not in profile_data or not profile_data.get("raw_text"):
-                profile_data["raw_text"] = ""  # Default empty string for raw_text
-            if "extracted_skills" not in profile_data:
-                profile_data["extracted_skills"] = {}
-            if "years_of_experience" not in profile_data:
-                profile_data["years_of_experience"] = {}
-            if "domain_tags" not in profile_data:
-                profile_data["domain_tags"] = []
-            
+            print(f"🔍 DEBUG: Candidate: {candidate.get('name', 'Unknown')} - {candidate.get('match_percentage', 0)}%")
+            # Add domain gap analysis
             domain_gap = GapAnalyzer.analyze_domain_gap(
-                CandidateProfile(**profile_data),
+                CandidateProfile(**candidate),
                 parsed_requirement.get("domain", "")
             )
             if domain_gap:

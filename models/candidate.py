@@ -12,7 +12,7 @@ class CandidateProfile(BaseModel):
     id: Optional[int] = None
     name: str
     email: EmailStr
-    raw_text: str
+    raw_text: Optional[str] = None
     extracted_skills: Dict[str, Any] = Field(default_factory=dict)
     years_of_experience: Dict[str, float] = Field(default_factory=dict)
     domain_tags: List[str] = Field(default_factory=list)

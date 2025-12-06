@@ -69,5 +69,5 @@ lambda_deployment.zip
 
 # Model cache
 .cache/
-
+models/
 
